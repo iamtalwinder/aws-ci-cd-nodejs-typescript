@@ -1,0 +1,40 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Create an Amazon ECR Repository
+
+Parameters:
+  RepositoryName:
+    Type: String
+    Description: The name of the ECR repository.
+    Default: aws-ci-cd-nodejs-typescript
+
+Resources:
+  ECRRepository:
+    Type: 'AWS::ECR::Repository'
+    Properties:
+      RepositoryName: !Ref RepositoryName
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Only keep 10 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+              },
+              "action": { "type": "expire" }
+            }]
+          }
+      EncryptionConfiguration:
+        EncryptionType: KMS
+        KmsKey: 'alias/aws/ecr'
+
+Outputs:
+  RepositoryUri:
+    Description: The URI of the ECR repository.
+    Value: !GetAtt ECRRepository.RepositoryUri
