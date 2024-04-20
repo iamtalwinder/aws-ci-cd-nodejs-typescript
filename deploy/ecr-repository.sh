@@ -1,12 +1,10 @@
 #!/bin/bash
-
-STACK_NAME="aws-ci-cd-nodejs-typescript"
+REPOSITORY_NAME="aws-ci-cd-nodejs-typescript"
 TEMPLATE_FILE="infra/ecr-repository.yaml"
-PARAMETER_OVERRIDES="RepositoryName=aws-ci-cd-nodejs-typescript"
+PARAMETER_OVERRIDES="RepositoryName=$REPOSITORY_NAME"
 
-# Deploy the CloudFormation stack
 aws cloudformation deploy \
-    --stack-name $STACK_NAME \
+    --stack-name $REPOSITORY_NAME \
     --template-file $TEMPLATE_FILE \
     --capabilities CAPABILITY_NAMED_IAM \
     --parameter-overrides $PARAMETER_OVERRIDES
