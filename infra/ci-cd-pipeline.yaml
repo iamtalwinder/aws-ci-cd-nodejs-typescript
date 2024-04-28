@@ -1,0 +1,217 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Parameters:
+  ECRRegion:
+    Type: String
+    Description: AWS region where the ECR repository is located
+    Default: '{{resolve:ssm:ci-cd-nodejs-typescript-region}}'
+  GithubOauthToken:
+    Type: String
+    Description: Github Oauth token
+    Default: '{{resolve:ssm-secure:ci-cd-nodejs-typescript-github-oauth-token}}'
+  GithubRepoOwner:
+    Type: String
+    Description: Github repo owner
+    Default: '{{resolve:ssm:ci-cd-nodejs-typescript-github-repo-owner}}'
+  GithubBranch:
+    Type: String
+    Description: Github repo branch
+    Default: '{{resolve:ssm:ci-cd-nodejs-typescript-github-branch}}'
+  ClusterName:
+    Type: String
+    Description: ECS cluster name
+  ServiceName:
+    Type: String
+    Description: ECS service name
+
+Resources:
+  ArtifactS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: aws-ci-cd-nodejs-typescript
+
+  ArtifactS3BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ArtifactS3Bucket
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS:
+                - !GetAtt CodePipelineRole.Arn
+                - !GetAtt CodeBuildRole.Arn
+            Action:
+              - s3:GetObject
+              - s3:GetObjectVersion
+              - s3:PutObject
+            Resource: 
+              - !Sub "arn:aws:s3:::${ArtifactS3Bucket}/*"
+
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonECS_FullAccess
+      Policies:
+        - PolicyName: CodePipelineAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+              - Effect: Allow
+                Action:
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuilds
+                  - ssm:GetParameter*
+                  - kms:Decrypt
+                Resource: '*'
+
+  CodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: aws-ci-cd-nodejs-typescript
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactS3Bucket
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: Source
+              ActionTypeId:
+                Category: Source
+                Owner: ThirdParty
+                Provider: GitHub
+                Version: '1'
+              Configuration:
+                Owner: !Ref GithubRepoOwner
+                Repo: aws-ci-cd-nodejs-typescript
+                Branch: !Ref GithubBranch
+                OAuthToken: !Ref GithubOauthToken
+              OutputArtifacts:
+                - Name: SourceOutput
+
+        - Name: Build
+          Actions:
+            - Name: Build
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref CodeBuildProject
+              InputArtifacts:
+                - Name: SourceOutput
+              OutputArtifacts:
+                - Name: BuildOutput
+
+        - Name: Deploy
+          Actions:
+            - Name: Deploy
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: ECS
+                Version: '1'
+              Configuration:
+                ClusterName: !Ref ClusterName
+                ServiceName: !Ref ServiceName
+              InputArtifacts:
+                - Name: BuildOutput
+
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodeBuildAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+              - Effect: Allow
+                Action:
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuilds
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:CompleteLayerUpload
+                  - ecr:GetAuthorizationToken
+                  - ecr:InitiateLayerUpload
+                  - ecr:PutImage
+                  - ecr:UploadLayerPart
+                  - ssm:GetParameter*
+                Resource: '*'
+
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: aws-ci-cd-nodejs-typescript
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:5.0
+        Type: LINUX_CONTAINER
+      TimeoutInMinutes: 10
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: !Sub |
+          version: 0.2
+          phases:
+            install:
+              commands:
+                - npm install
+            pre_build:
+              commands:
+                - echo Logging in to Amazon ECR...
+                - aws --version
+                - aws ecr get-login-password --region ${ECRRegion} | docker login --username AWS --password-stdin ${AWS::AccountId}.dkr.ecr.${ECRRegion}.amazonaws.com
+            build:
+              commands:
+                - echo Building the Docker image...
+                - docker build -t aws-ci-cd-nodejs-typescript .
+                - docker tag aws-ci-cd-nodejs-typescript:latest ${AWS::AccountId}.dkr.ecr.${ECRRegion}.amazonaws.com/aws-ci-cd-nodejs-typescript:latest
+                - docker push ${AWS::AccountId}.dkr.ecr.${ECRRegion}.amazonaws.com/aws-ci-cd-nodejs-typescript:latest
+                - echo Build completed.
+                - printf '[{"name":"aws-ci-cd-nodejs-typescript","imageUri":"%s"}]' "${AWS::AccountId}.dkr.ecr.${ECRRegion}.amazonaws.com/aws-ci-cd-nodejs-typescript:latest" > imagedefinitions.json
+          artifacts:
+            files:
+              - '**/*'
+              - imagedefinitions.json
+          cache:
+            paths:
+              - 'node_modules/**/*'
+
+Outputs:
+  PipelineName:
+    Description: "Name of the CodePipeline"
+    Value: !Ref CodePipeline

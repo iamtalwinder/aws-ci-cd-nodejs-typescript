@@ -16,10 +16,12 @@ Parameters:
   VpcId:
     Type: AWS::EC2::VPC::Id
     Description: The ID of the VPC to use.
+    Default: '{{resolve:ssm:ci-cd-nodejs-typescript-vpc-id:1}}'
 
   SubnetIds:
     Type: List<AWS::EC2::Subnet::Id>
     Description: SubnetIds to use
+    Default: '{{resolve:ssm:ci-cd-nodejs-typescript-subnet-ids:1}}'
 
 Resources:
   # Security Group for ECS and ALB
@@ -68,6 +70,7 @@ Resources:
                   - ecr:BatchCheckLayerAvailability
                   - ecr:GetDownloadUrlForLayer
                   - ecr:BatchGetImage
+                  - ssm:GetParameter*
                 Resource: "*"
               - Effect: Allow
                 Action:
@@ -113,6 +116,7 @@ Resources:
       Port: 3000
       HealthCheckProtocol: HTTP
       HealthCheckPort: 3000
+      HealthCheckPath: /health
       TargetType: ip
 
   # ECS Service
@@ -121,14 +125,16 @@ Resources:
     DependsOn: LoadBalancer
     Properties:
       Cluster: !Ref ECSCluster
+      ServiceName: !Sub "${RepositoryName}-service"
       TaskDefinition: !Ref ECSTaskDefinition
-      DesiredCount: 0
+      DesiredCount: 1
       LaunchType: FARGATE
       NetworkConfiguration:
         AwsvpcConfiguration:
           Subnets: !Ref SubnetIds
           SecurityGroups:
             - !Ref SecurityGroup
+          AssignPublicIp: ENABLED
       LoadBalancers:
         - ContainerName: !Ref RepositoryName
           ContainerPort: 3000
