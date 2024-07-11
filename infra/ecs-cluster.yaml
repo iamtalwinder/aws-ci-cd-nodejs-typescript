@@ -2,7 +2,6 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: Deploy a Node.js TypeScript application using ECS
 
 Parameters:
-  # Parameterize repository name and image tag
   RepositoryName:
     Type: String
     Description: The name of the ECR repository.
@@ -16,12 +15,10 @@ Parameters:
   VpcId:
     Type: AWS::EC2::VPC::Id
     Description: The ID of the VPC to use.
-    Default: '{{resolve:ssm:ci-cd-nodejs-typescript-vpc-id:1}}'
 
   SubnetIds:
     Type: List<AWS::EC2::Subnet::Id>
     Description: SubnetIds to use
-    Default: '{{resolve:ssm:ci-cd-nodejs-typescript-subnet-ids:1}}'
 
 Resources:
   # Security Group for ECS and ALB
@@ -45,7 +42,7 @@ Resources:
   ECSCluster:
     Type: AWS::ECS::Cluster
     Properties:
-      ClusterName: !Ref RepositoryName
+      ClusterName: !Sub "${RepositoryName}-cluster"
 
   # ECS Task Execution Role
   ECSTaskExecutionRole:

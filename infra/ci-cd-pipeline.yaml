@@ -4,19 +4,20 @@ Parameters:
   ECRRegion:
     Type: String
     Description: AWS region where the ECR repository is located
-    Default: '{{resolve:ssm:ci-cd-nodejs-typescript-region}}'
+  RepositoryName:
+    Type: String
+    Description: The name of the ECR repository.
+    Default: aws-ci-cd-nodejs-typescript
   GithubOauthToken:
     Type: String
     Description: Github Oauth token
-    Default: '{{resolve:ssm-secure:ci-cd-nodejs-typescript-github-oauth-token}}'
   GithubRepoOwner:
     Type: String
     Description: Github repo owner
-    Default: '{{resolve:ssm:ci-cd-nodejs-typescript-github-repo-owner}}'
   GithubBranch:
     Type: String
     Description: Github repo branch
-    Default: '{{resolve:ssm:ci-cd-nodejs-typescript-github-branch}}'
+    Default: main
   ClusterName:
     Type: String
     Description: ECS cluster name
@@ -28,7 +29,7 @@ Resources:
   ArtifactS3Bucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: aws-ci-cd-nodejs-typescript
+      BucketName: !Sub "${RepositoryName}-bucket"
 
   ArtifactS3BucketPolicy:
     Type: AWS::S3::BucketPolicy
@@ -70,7 +71,7 @@ Resources:
                   - logs:CreateLogGroup
                   - logs:CreateLogStream
                   - logs:PutLogEvents
-                Resource: arn:aws:logs:*:*:*
+                Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*
               - Effect: Allow
                 Action:
                   - codebuild:StartBuild
@@ -82,7 +83,7 @@ Resources:
   CodePipeline:
     Type: AWS::CodePipeline::Pipeline
     Properties:
-      Name: aws-ci-cd-nodejs-typescript
+      Name: !Sub "${RepositoryName}-pipeline"
       RoleArn: !GetAtt CodePipelineRole.Arn
       ArtifactStore:
         Type: S3
@@ -98,7 +99,7 @@ Resources:
                 Version: '1'
               Configuration:
                 Owner: !Ref GithubRepoOwner
-                Repo: aws-ci-cd-nodejs-typescript
+                Repo: !Ref RepositoryName
                 Branch: !Ref GithubBranch
                 OAuthToken: !Ref GithubOauthToken
               OutputArtifacts:
@@ -153,12 +154,12 @@ Resources:
                   - logs:CreateLogGroup
                   - logs:CreateLogStream
                   - logs:PutLogEvents
-                Resource: arn:aws:logs:*:*:*
+                Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*
               - Effect: Allow
                 Action:
                   - codebuild:StartBuild
                   - codebuild:BatchGetBuilds
-                Resource: '*'
+                Resource: !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/${RepositoryName}-build"
               - Effect: Allow
                 Action:
                   - ecr:BatchCheckLayerAvailability
@@ -168,12 +169,16 @@ Resources:
                   - ecr:PutImage
                   - ecr:UploadLayerPart
                   - ssm:GetParameter*
-                Resource: '*'
+                Resource: !Sub "arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${RepositoryName}"
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter*
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/ci-cd-nodejs-typescript-*"
 
   CodeBuildProject:
     Type: AWS::CodeBuild::Project
     Properties:
-      Name: aws-ci-cd-nodejs-typescript
+      Name: !Sub "${RepositoryName}-build"
       ServiceRole: !GetAtt CodeBuildRole.Arn
       Artifacts:
         Type: CODEPIPELINE
@@ -198,11 +203,11 @@ Resources:
             build:
               commands:
                 - echo Building the Docker image...
-                - docker build -t aws-ci-cd-nodejs-typescript .
-                - docker tag aws-ci-cd-nodejs-typescript:latest ${AWS::AccountId}.dkr.ecr.${ECRRegion}.amazonaws.com/aws-ci-cd-nodejs-typescript:latest
-                - docker push ${AWS::AccountId}.dkr.ecr.${ECRRegion}.amazonaws.com/aws-ci-cd-nodejs-typescript:latest
+                - docker build -t ${RepositoryName} .
+                - docker tag ${RepositoryName}:latest ${AWS::AccountId}.dkr.ecr.${ECRRegion}.amazonaws.com/${RepositoryName}:latest
+                - docker push ${AWS::AccountId}.dkr.ecr.${ECRRegion}.amazonaws.com/${RepositoryName}:latest
                 - echo Build completed.
-                - printf '[{"name":"aws-ci-cd-nodejs-typescript","imageUri":"%s"}]' "${AWS::AccountId}.dkr.ecr.${ECRRegion}.amazonaws.com/aws-ci-cd-nodejs-typescript:latest" > imagedefinitions.json
+                - printf '[{"name":"${RepositoryName}","imageUri":"%s"}]' "${AWS::AccountId}.dkr.ecr.${ECRRegion}.amazonaws.com/${RepositoryName}:latest" > imagedefinitions.json
           artifacts:
             files:
               - '**/*'
